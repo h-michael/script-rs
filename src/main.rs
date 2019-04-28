@@ -29,8 +29,16 @@ fn main() {
     };
 
     if fork_result.is_child() {
-        let shell = CString::new("/bin/bash").unwrap();
-        execve(&shell, &[], &[]).expect("can not exec shell");
+        match std::env::var("SHELL") {
+            Ok(shell) => {
+                let shell = CString::new(shell.as_str()).unwrap();
+                execv(&shell, &[]).expect("can not exec shell");
+            },
+            Err(_) => {
+                let shell = CString::new("/bin/sh").unwrap();
+                execv(&shell, &[]).expect("can not exec shell");
+            }
+        }
     }
 
     let master_fd = match master_fd {
