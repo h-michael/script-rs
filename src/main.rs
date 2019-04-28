@@ -1,5 +1,8 @@
+#[macro_use]
+extern crate lazy_static;
+
 use nix::fcntl::{open, OFlag};
-use nix::libc::{winsize, STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO, VMIN, VTIME};
+use nix::libc::{atexit, winsize, STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO, VMIN, VTIME};
 use nix::pty::*;
 use nix::sys::select::{select, FdSet};
 use nix::sys::stat::Mode;
@@ -10,6 +13,12 @@ use std::ffi::CString;
 use std::os::unix::prelude::*;
 use std::path::Path;
 
+use std::sync::Mutex;
+
+lazy_static! {
+    static ref TERMIOS: Mutex<Termios> = Mutex::new(tcgetattr(STDIN_FILENO).expect("can not get stdin tty"));
+}
+
 fn main() {
     let mut ws = winsize {
         ws_row: 0,
@@ -17,13 +26,13 @@ fn main() {
         ws_xpixel: 0,
         ws_ypixel: 0,
     };
-    let mut tty_origin = tcgetattr(STDIN_FILENO).expect("can not get stdin tty");
+    // let mut tty_origin = tcgetattr(STDIN_FILENO).expect("can not get stdin tty");
     unsafe { ioctl::tiocgwinsz(STDIN_FILENO, &mut ws) }.expect("can not ge stdin window size");
 
     let mut master_fd = None;
     let mut slave_name = None;
 
-    let fork_result = match pty_fork(&mut master_fd, &mut slave_name, Some(&tty_origin), ws) {
+    let fork_result = match pty_fork(&mut master_fd, &mut slave_name, Some(&*TERMIOS.lock().unwrap()), ws) {
         Ok(result) => result,
         Err(e) => panic!("{:?}", e),
     };
@@ -57,8 +66,8 @@ fn main() {
             | Mode::S_IWOTH,
     )
     .expect("script_fd");
-    tty_set_row(STDIN_FILENO, Some(&mut tty_origin));
-    tty_reset(&mut tty_origin).unwrap();
+    tty_set_row(STDIN_FILENO, Some(&mut *TERMIOS.lock().unwrap()));
+    unsafe { atexit(reset_tty) };
 
     loop {
         let mut buf: [u8; 256] = [0; 256];
@@ -171,8 +180,8 @@ fn tty_set_row(fd: i32, prev_termios: Option<&mut Termios>) {
     tcsetattr(fd, SetArg::TCSAFLUSH, &termios).unwrap();
 }
 
-fn tty_reset(tty_origin: &mut Termios) -> Result<()> {
-    tcsetattr(STDIN_FILENO, SetArg::TCSANOW, tty_origin)
+extern "C" fn reset_tty() {
+    tcsetattr(STDIN_FILENO, SetArg::TCSANOW, &TERMIOS.lock().unwrap()).unwrap()
 }
 
 mod ioctl {
