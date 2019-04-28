@@ -17,25 +17,25 @@ fn main() {
         ws_xpixel: 0,
         ws_ypixel: 0,
     };
-    let mut tty_origin = tcgetattr(STDIN_FILENO).expect("stdin");
-    unsafe { ioctl::tiocgwinsz(STDIN_FILENO, &mut ws) }.expect("stdout");
+    let mut tty_origin = tcgetattr(STDIN_FILENO).expect("can not get stdin tty");
+    unsafe { ioctl::tiocgwinsz(STDIN_FILENO, &mut ws) }.expect("can not ge stdin window size");
 
-    let mut tmp_master_fd = None;
+    let mut master_fd = None;
     let mut slave_name = None;
 
-    let fork_result = match pty_fork(&mut tmp_master_fd, &mut slave_name, Some(&tty_origin), ws) {
+    let fork_result = match pty_fork(&mut master_fd, &mut slave_name, Some(&tty_origin), ws) {
         Ok(result) => result,
         Err(e) => panic!("{:?}", e),
     };
 
     if fork_result.is_child() {
         let shell = CString::new("/bin/bash").unwrap();
-        execve(&shell, &[], &[]).expect("can't exec shell");
+        execve(&shell, &[], &[]).expect("can not exec shell");
     }
 
-    let master_fd = match tmp_master_fd {
-        Some(fd) => fd.into_raw_fd(),
-        None => panic!("master fd is none"),
+    let master_fd = match master_fd {
+        Some(fd) => fd,
+        None => panic!("master fd is not found"),
     };
 
     let script_fd = open(
@@ -88,7 +88,7 @@ fn pty_master_open() -> Result<(nix::pty::PtyMaster, String)> {
 }
 
 fn pty_fork(
-    master_fd: &mut Option<nix::pty::PtyMaster>,
+    master_fd: &mut Option<RawFd>,
     slave_name: &mut Option<String>,
     slave_termios: Option<&Termios>,
     slave_win_size: winsize,
@@ -103,12 +103,13 @@ fn pty_fork(
     // Fork process
     match fork() {
         Ok(ForkResult::Parent { child }) => {
-            *master_fd = Some(mfd);
+            *master_fd = Some(mfd.into_raw_fd());
             Ok(ForkResult::Parent { child })
         }
         Ok(ForkResult::Child) => {
             // Set session id to child process
             setsid().unwrap();
+            close(mfd.into_raw_fd())?;
 
             let slave_fd = open(Path::new(&slname), OFlag::O_RDWR, Mode::empty())?;
             if slave_termios.is_some() {
@@ -123,7 +124,6 @@ fn pty_fork(
             dup2(slave_fd, STDERR_FILENO)?;
 
             close(slave_fd)?;
-            close(mfd.into_raw_fd())?;
 
             Ok(ForkResult::Child)
         }
