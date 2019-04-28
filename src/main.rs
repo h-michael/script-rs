@@ -120,6 +120,12 @@ fn pty_fork(
             close(mfd.into_raw_fd())?;
 
             let slave_fd = open(Path::new(&slname), OFlag::O_RDWR, Mode::empty())?;
+
+            // For BSD
+            if cfg!(target_os = "openbsd") {
+                unsafe { ioctl::tiocsctty(0, &slave_fd) }.unwrap();
+            }
+
             if slave_termios.is_some() {
                 tcsetattr(slave_fd, SetArg::TCSANOW, &slave_termios.unwrap())?;
             }
@@ -170,8 +176,9 @@ fn tty_reset(tty_origin: &mut Termios) -> Result<()> {
 }
 
 mod ioctl {
-    use nix::libc::{winsize, TIOCGWINSZ, TIOCSWINSZ};
+    use nix::libc::{winsize, TIOCGWINSZ, TIOCSWINSZ, TIOCSCTTY};
     use nix::*;
     ioctl_write_ptr_bad!(tiocswinsz, TIOCSWINSZ, winsize);
     ioctl_read_bad!(tiocgwinsz, TIOCGWINSZ, winsize);
+    ioctl_write_ptr_bad!(tiocsctty, TIOCSCTTY, i32);
 }
