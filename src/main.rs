@@ -1,4 +1,3 @@
-#[macro_use]
 extern crate structopt;
 use structopt::StructOpt;
 use std::path::PathBuf;
@@ -8,7 +7,7 @@ use std::path::Path;
 extern crate lazy_static;
 
 use nix::fcntl::{open, OFlag};
-use nix::libc::{atexit, winsize, STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO, VMIN, VTIME};
+use nix::libc::{atexit, winsize, STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
 use nix::pty::*;
 use nix::sys::select::{select, FdSet};
 use nix::sys::stat::Mode;
@@ -83,7 +82,7 @@ fn main() {
             | Mode::S_IWOTH,
     )
     .expect("script_fd");
-    tty_set_row(STDIN_FILENO, Some(&mut *TERMIOS.lock().unwrap()));
+    tty_set_row(STDIN_FILENO, &mut *TERMIOS.lock().unwrap());
     unsafe { atexit(reset_tty) };
 
     loop {
@@ -163,7 +162,9 @@ fn pty_fork(
             dup2(slave_fd, STDOUT_FILENO)?;
             dup2(slave_fd, STDERR_FILENO)?;
 
-            close(slave_fd)?;
+            if slave_fd > STDERR_FILENO {
+                close(slave_fd)?;
+            }
 
             Ok(ForkResult::Child)
         }
@@ -174,26 +175,10 @@ fn pty_fork(
     }
 }
 
-fn tty_set_row(fd: i32, prev_termios: Option<&mut Termios>) {
+fn tty_set_row(fd: i32, prev_termios: &mut Termios) {
+    *prev_termios = tcgetattr(fd).unwrap().clone();
     let mut termios = tcgetattr(fd).unwrap();
-    if let Some(prev) = prev_termios {
-        *prev = termios.clone()
-    };
-
-    termios.local_flags &=
-        !(LocalFlags::ICANON | LocalFlags::ISIG | LocalFlags::IEXTEN | LocalFlags::ECHO);
-    termios.input_flags &= !(InputFlags::BRKINT
-        | InputFlags::ICRNL
-        | InputFlags::IGNBRK
-        | InputFlags::IGNCR
-        | InputFlags::INLCR
-        | InputFlags::INPCK
-        | InputFlags::ISTRIP
-        | InputFlags::IXON
-        | InputFlags::PARMRK);
-    termios.output_flags &= !OutputFlags::OPOST;
-    termios.control_chars[VMIN as usize] = 1;
-    termios.control_chars[VTIME as usize] = 0;
+    cfmakeraw(&mut termios);
     tcsetattr(fd, SetArg::TCSAFLUSH, &termios).unwrap();
 }
 
