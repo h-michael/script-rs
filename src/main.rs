@@ -1,4 +1,10 @@
 #[macro_use]
+extern crate structopt;
+use structopt::StructOpt;
+use std::path::PathBuf;
+use std::path::Path;
+
+#[macro_use]
 extern crate lazy_static;
 
 use nix::fcntl::{open, OFlag};
@@ -11,22 +17,31 @@ use nix::unistd::*;
 use nix::Result;
 use std::ffi::CString;
 use std::os::unix::prelude::*;
-use std::path::Path;
 
 use std::sync::Mutex;
+
+
+#[derive(StructOpt)]
+struct Opt {
+    /// Output file, typescript if not present
+    #[structopt(parse(from_os_str))]
+    pub output: Option<PathBuf>,
+}
 
 lazy_static! {
     static ref TERMIOS: Mutex<Termios> = Mutex::new(tcgetattr(STDIN_FILENO).expect("can not get stdin tty"));
 }
 
 fn main() {
+    let opt = Opt::from_args();
+
     let mut ws = winsize {
         ws_row: 0,
         ws_col: 0,
         ws_xpixel: 0,
         ws_ypixel: 0,
     };
-    // let mut tty_origin = tcgetattr(STDIN_FILENO).expect("can not get stdin tty");
+
     unsafe { ioctl::tiocgwinsz(STDIN_FILENO, &mut ws) }.expect("can not ge stdin window size");
 
     let mut master_fd = None;
@@ -55,8 +70,10 @@ fn main() {
         None => panic!("master fd is not found"),
     };
 
+    let out_path = opt.output.unwrap_or_else(|| PathBuf::from("typescript"));
+
     let script_fd = open(
-        Path::new("/tmp/script_tmp"),
+        out_path.as_path(),
         OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_TRUNC,
         Mode::S_IRUSR
             | Mode::S_IWUSR
